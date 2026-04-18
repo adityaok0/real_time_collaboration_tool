@@ -1,0 +1,23 @@
+{
+  "name": "real-time-collaboration-tool",
+  "version": "0.1.0",
+  "description": "Initial MVP for a room-based real-time collaboration editor.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "collaboration",
+    "socket.io",
+    "editor",
+    "realtime"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}

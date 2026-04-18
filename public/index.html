@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real-Time Collaboration Tool</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="panel">
+          <p class="eyebrow">Room</p>
+          <h1>Realtime Editor</h1>
+          <p id="room-link" class="muted">Preparing room...</p>
+          <button id="new-room-button" class="secondary-button" type="button">
+            Create new room
+          </button>
+        </div>
+
+        <div class="panel">
+          <p class="eyebrow">You</p>
+          <div id="identity-card"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <p class="eyebrow">Users Online</p>
+            <span id="online-count" class="badge">0</span>
+          </div>
+          <ul id="users-list" class="users-list"></ul>
+        </div>
+      </aside>
+
+      <main class="editor-area">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Phase 1 MVP</p>
+            <h2>Shared document</h2>
+          </div>
+          <p class="muted">
+            Text syncs in real time across tabs connected to the same room.
+          </p>
+        </div>
+
+        <label class="sr-only" for="editor">Collaborative editor</label>
+        <textarea
+          id="editor"
+          spellcheck="false"
+          placeholder="Start typing here. Open a second tab with the same room URL to test live sync."
+        ></textarea>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>
