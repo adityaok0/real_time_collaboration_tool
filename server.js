@@ -4,7 +4,15 @@ import { fileURLToPath } from "node:url";
 
 import express from "express";
 import { createServer } from "node:http";
-import { Server } from "socket.io"; 
+import Redis from "ioredis";
+import { Server } from "socket.io";
+import {
+  Awareness,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+  removeAwarenessStates
+} from "y-protocols/awareness.js";
+import * as Y from "yjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,32 +21,161 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server);
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "127.0.0.1";
+const ROOM_TTL_SECONDS = Number(process.env.ROOM_TTL_SECONDS) || 1800;
+const ROOM_STATE_KEY_PREFIX = "rtc:room:";
 const rooms = new Map();
+
+const redis = process.env.REDIS_URL
+  ? new Redis(process.env.REDIS_URL, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1
+    })
+  : null;
+
+if (redis) {
+  redis.on("error", (error) => {
+    console.error("Redis unavailable, continuing with in-memory persistence only.", error.message);
+  });
+}
 
 function generateRoomId() {
   return crypto.randomBytes(4).toString("hex");
 }
 
-function getOrCreateRoom(roomId) {
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      text: "",
-      users: new Map()
-    });
-  }
-
-  return rooms.get(roomId);
+function encodeBase64(uint8Array) {
+  return Buffer.from(uint8Array).toString("base64");
 }
 
-function serializeUsers(users) {
-  return Array.from(users.values()).map((user) => ({
-    id: user.id,
-    name: user.name,
-    color: user.color,
-    cursor: user.cursor
-  }));
+function decodeBase64(value) {
+  return new Uint8Array(Buffer.from(value, "base64"));
+}
+
+function getRoomRedisKey(roomId) {
+  return `${ROOM_STATE_KEY_PREFIX}${roomId}`;
+}
+
+async function connectRedis() {
+  if (!redis) {
+    return false;
+  }
+
+  try {
+    await redis.connect();
+  } catch (error) {
+    if (error.message !== "Redis is already connecting/connected") {
+      console.error("Failed to connect to Redis.", error.message);
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function loadPersistedRoom(roomId) {
+  if (!(await connectRedis())) {
+    return null;
+  }
+
+  try {
+    const payload = await redis.get(getRoomRedisKey(roomId));
+
+    if (!payload) {
+      return null;
+    }
+
+    const parsed = JSON.parse(payload);
+    const doc = new Y.Doc();
+
+    if (parsed.documentUpdate) {
+      Y.applyUpdate(doc, decodeBase64(parsed.documentUpdate));
+    }
+
+    return doc;
+  } catch (error) {
+    console.error("Failed to load persisted room state.", error.message);
+    return null;
+  }
+}
+
+async function persistRoom(roomId, room) {
+  if (!(await connectRedis())) {
+    return;
+  }
+
+  try {
+    const payload = JSON.stringify({
+      documentUpdate: encodeBase64(Y.encodeStateAsUpdate(room.doc)),
+      savedAt: Date.now()
+    });
+
+    await redis.set(getRoomRedisKey(roomId), payload, "EX", ROOM_TTL_SECONDS);
+  } catch (error) {
+    console.error("Failed to persist room state.", error.message);
+  }
+}
+
+function queueRoomPersistence(roomId, room) {
+  if (room.persistTimer) {
+    clearTimeout(room.persistTimer);
+  }
+
+  room.persistTimer = setTimeout(() => {
+    room.persistTimer = null;
+    void persistRoom(roomId, room);
+  }, 250);
+}
+
+function createEmptyRoom() {
+  const doc = new Y.Doc();
+
+  return {
+    doc,
+    awareness: new Awareness(doc),
+    sockets: new Set(),
+    cleanupTimer: null,
+    persistTimer: null
+  };
+}
+
+async function getOrCreateRoom(roomId) {
+  if (rooms.has(roomId)) {
+    const existingRoom = rooms.get(roomId);
+
+    if (existingRoom.cleanupTimer) {
+      clearTimeout(existingRoom.cleanupTimer);
+      existingRoom.cleanupTimer = null;
+    }
+
+    return existingRoom;
+  }
+
+  const room = createEmptyRoom();
+  const persistedDoc = await loadPersistedRoom(roomId);
+
+  if (persistedDoc) {
+    Y.applyUpdate(room.doc, Y.encodeStateAsUpdate(persistedDoc));
+  }
+
+  const roomMeta = room.doc.getMap("meta");
+
+  if (!roomMeta.get("language")) {
+    roomMeta.set("language", "javascript");
+  }
+
+  rooms.set(roomId, room);
+  return room;
+}
+
+function scheduleRoomCleanup(roomId, room) {
+  if (room.cleanupTimer) {
+    clearTimeout(room.cleanupTimer);
+  }
+
+  room.cleanupTimer = setTimeout(() => {
+    rooms.delete(roomId);
+  }, ROOM_TTL_SECONDS * 1000);
 }
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -52,81 +189,73 @@ app.get("/room/:roomId", (_req, res) => {
 });
 
 io.on("connection", (socket) => {
-  socket.on("join-room", ({ roomId, user }) => {
-    if (!roomId || !user?.name || !user?.color) {
-      socket.emit("server-error", { message: "Missing room or user details." });
+  socket.on("join-room", async ({ roomId, user, clientId }) => {
+    if (!roomId || !user?.name || !user?.color || !user?.colorLight || !Number.isInteger(clientId)) {
+      socket.emit("server-error", { message: "Missing room, identity, or CRDT client details." });
       return;
     }
 
-    const room = getOrCreateRoom(roomId);
+    const room = await getOrCreateRoom(roomId);
+
     socket.join(roomId);
     socket.data.roomId = roomId;
+    socket.data.clientId = clientId;
+    room.sockets.add(socket.id);
 
-    room.users.set(socket.id, {
-      id: socket.id,
-      name: user.name,
-      color: user.color,
-      cursor: { line: 1, column: 1 }
-    });
+    const awarenessClientIds = Array.from(room.awareness.getStates().keys());
 
     socket.emit("initial-state", {
       roomId,
-      text: room.text,
-      users: serializeUsers(room.users)
-    });
-
-    socket.to(roomId).emit("presence-update", {
-      users: serializeUsers(room.users)
+      documentUpdate: encodeBase64(Y.encodeStateAsUpdate(room.doc)),
+      awarenessUpdate: awarenessClientIds.length > 0
+        ? encodeBase64(encodeAwarenessUpdate(room.awareness, awarenessClientIds))
+        : null
     });
   });
 
-  socket.on("edit-code", ({ roomId, text }) => {
+  socket.on("y-update", ({ roomId, update }) => {
     const room = rooms.get(roomId);
 
-    if (!room || typeof text !== "string") {
+    if (!room || typeof update !== "string") {
       return;
     }
 
-    room.text = text;
-    socket.to(roomId).emit("remote-code-update", { text });
+    Y.applyUpdate(room.doc, decodeBase64(update), socket.id);
+    queueRoomPersistence(roomId, room);
+    socket.to(roomId).emit("y-update", { update });
   });
 
-  socket.on("cursor-move", ({ roomId, cursor }) => {
+  socket.on("awareness-update", ({ roomId, update }) => {
     const room = rooms.get(roomId);
-    const user = room?.users.get(socket.id);
 
-    if (!room || !user || !cursor) {
+    if (!room || typeof update !== "string") {
       return;
     }
 
-    user.cursor = {
-      line: Number(cursor.line) || 1,
-      column: Number(cursor.column) || 1
-    };
-
-    io.to(roomId).emit("presence-update", {
-      users: serializeUsers(room.users)
-    });
+    applyAwarenessUpdate(room.awareness, decodeBase64(update), socket.id);
+    socket.to(roomId).emit("awareness-update", { update });
   });
 
   socket.on("disconnect", () => {
     const roomId = socket.data.roomId;
+    const clientId = socket.data.clientId;
     const room = roomId ? rooms.get(roomId) : undefined;
 
     if (!room) {
       return;
     }
 
-    room.users.delete(socket.id);
+    room.sockets.delete(socket.id);
 
-    if (room.users.size === 0 && room.text.length === 0) {
-      rooms.delete(roomId);
-      return;
+    if (Number.isInteger(clientId) && room.awareness.getStates().has(clientId)) {
+      removeAwarenessStates(room.awareness, [clientId], socket.id);
+      socket.to(roomId).emit("awareness-remove", { clientIds: [clientId] });
     }
 
-    io.to(roomId).emit("presence-update", {
-      users: serializeUsers(room.users)
-    });
+    if (room.sockets.size === 0) {
+      void persistRoom(roomId, room);
+      scheduleRoomCleanup(roomId, room);
+    }
   });
 });
 

@@ -1,49 +1,85 @@
 # RealTimeCollaborationTool
-A real time collaboration editor tool
 
-## Current MVP
+RealTimeCollaborationTool is a room-based collaborative code editor for sharing a live editing session with other users through a simple URL. It combines a CodeMirror editing experience with Yjs CRDT synchronization over Socket.IO so concurrent edits merge cleanly instead of overwriting each other.
 
-This repository now includes an initial runnable version of the project:
+## What It Does
 
-- Room-based collaborative text editor
-- Real-time sync between connected browser tabs using Socket.IO
-- Presence sidebar with active users
-- Shareable room URLs
-- Lightweight cursor position updates shown per user
+- Creates shareable collaboration rooms with unique URLs
+- Syncs code changes in real time across connected users
+- Shows live presence, including remote cursors and selections
+- Supports syntax highlighting for JavaScript, Python, and C++
+- Includes dark and light themes
+- Keeps room state around temporarily so refreshes and short disconnects do not immediately wipe the document
 
-## Run locally
+## How It Works
+
+The frontend uses CodeMirror 6 as the editor and Yjs as the shared document model. Socket.IO carries Yjs document updates and awareness updates between clients, while the Node.js and Express server manages room membership and temporary room state. Redis can be enabled as an optional backing store for ephemeral persistence across server restarts.
+
+## Tech Stack
+
+- Frontend: vanilla browser app bundled with `esbuild`
+- Editor: CodeMirror 6
+- Real-time sync: Yjs CRDTs over Socket.IO
+- Backend: Node.js + Express
+- Optional persistence: Redis via `ioredis`
+
+## Running Locally
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Start the development server:
+
+```bash
 npm run dev
 ```
 
-Then open `http://localhost:3000`, create or reuse a room, and test syncing in two tabs.
+Open `http://localhost:3000`, create a room, and open the same room URL in another tab or browser window to test collaborative editing.
 
-## Road Map
+## Production Start
 
-🛠️ The Tech Stack
-To make this performant and modern, I recommend:
-•	Frontend: React or Next.js (for the UI).
-•	Editor Engine: Monaco Editor (the engine behind VS Code) or CodeMirror.
-•	Real-Time Engine: Socket.io (for the communication layer).
-•	Backend: Node.js with Express.
-•	State Sync (The "Pro" Move): Yjs or Automerge. These handle "Conflict-free Replicated Data Types" (CRDTs), which prevent users' text from jumping around when they type at the same time.
-🚀 Phase 1: The Basic Sync (The "Hello World")
-Before worrying about complex code, just get text syncing between two tabs.
-	1.	Set up a basic Express server with Socket.io.
-	2.	On the frontend, create a text area.
-	3.	The Logic: Whenever a user types, emit an edit-code event with the full text. The server broadcasts this to all other connected clients.
-	4.	The Goal: If I type "Hello" in Tab A, "Hello" should appear in Tab B.
-🏗️ Phase 2: Rooms and Identity
-You don't want everyone on the internet editing the same document.
-•	Unique Rooms: Use socket.join(roomId). Generate a random ID (like [my-app.com/room/abc-123](https://my-app.com/room/abc-123)) so friends can join the same space.
-•	User Cursors: This is the "wow" factor. Assign each user a random color and display their name above a "virtual cursor" where they are currently clicking.
-•	Sidebar: List the "Users Online" in the current room.
-🧠 Phase 3: Solving the "Collision" Problem
-If User A and User B type at the exact same millisecond, simple Socket.io emissions will cause the text to flicker or overwrite.
-•	Integrate Yjs. It handles the heavy lifting of merging changes so that no matter how fast people type, the final document looks the same for everyone.
-🎨 Phase 4:
-•	Syntax Highlighting: Since you're using Monaco or CodeMirror, let users select a language (JavaScript, Python, C++) from a dropdown.
-•	Themes: Add a Dark Mode/Light Mode toggle.
-•	Ephemeral Persistence: Use Redis to temporarily save the code so that if a user refreshes the page, their work doesn't immediately vanish.
+```bash
+npm start
+```
+
+## Optional Redis Persistence
+
+By default, room state is retained in memory for a limited time. To persist that temporary room state across server restarts, provide `REDIS_URL`:
+
+```bash
+REDIS_URL=redis://127.0.0.1:6379 npm run dev
+```
+
+You can also tune the room retention window with `ROOM_TTL_SECONDS`.
+
+## Current Features
+
+- CRDT-based concurrent editing
+- Shareable room URLs
+- Presence sidebar with active collaborators
+- Remote cursor and selection awareness
+- Language switcher
+- Theme toggle
+- Temporary room persistence
+
+## Project Structure
+
+```text
+.
+├── public/         # Static assets and built browser bundle
+├── scripts/        # Build helpers
+├── src/            # Frontend source
+├── server.js       # Express + Socket.IO server
+└── package.json
+```
+
+## Future Improvements
+
+- Add user-provided display names instead of generated identities
+- Add durable persistence for saved projects and room history
+- Add authentication and private room controls
+- Add richer language support and editor tooling
+- Add automated tests for reconnect and multi-user browser flows

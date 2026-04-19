@@ -35,20 +35,32 @@
       <main class="editor-area">
         <div class="editor-header">
           <div>
-            <p class="eyebrow">Phase 1 MVP</p>
-            <h2>Shared document</h2>
+            <p class="eyebrow">Phase 3 + 4</p>
+            <h2>CRDT-powered shared editor</h2>
           </div>
           <p class="muted">
-            Text syncs in real time across tabs connected to the same room.
+            Yjs merges concurrent edits, CodeMirror handles syntax highlighting, and the room state survives refreshes.
           </p>
         </div>
 
-        <label class="sr-only" for="editor">Collaborative editor</label>
-        <textarea
-          id="editor"
-          spellcheck="false"
-          placeholder="Start typing here. Open a second tab with the same room URL to test live sync."
-        ></textarea>
+        <div class="toolbar">
+          <label class="toolbar-control">
+            <span>Language</span>
+            <select id="language-select">
+              <option value="javascript">JavaScript</option>
+              <option value="python">Python</option>
+              <option value="cpp">C++</option>
+            </select>
+          </label>
+
+          <button id="theme-toggle" class="secondary-button" type="button">
+            Toggle theme
+          </button>
+
+          <p id="status-pill" class="status-pill">Connecting…</p>
+        </div>
+
+        <div id="editor" class="editor-surface" aria-label="Collaborative code editor"></div>
       </main>
     </div>
 
